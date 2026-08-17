@@ -1,0 +1,15 @@
+{
+  "name": "내 즐겨찾기",
+  "short_name": "즐겨찾기",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#f0f2f5",
+  "theme_color": "#f0f2f5",
+  "icons": [
+    {
+      "src": "https://cdn-icons-png.flaticon.com/512/732/732221.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}
