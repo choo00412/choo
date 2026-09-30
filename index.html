@@ -209,6 +209,9 @@
     .modal-content textarea { min-height: 110px; resize: vertical; }
     .modal-hint { font-size: 12px; color: #8a94a3; margin: -4px 0 12px; line-height: 1.5; }
     .modal-error { font-size: 13px; color: #ff3b30; margin: -4px 0 12px; min-height: 16px; text-align: center; }
+    .modal-status { font-size: 13px; margin: 0 0 8px; min-height: 16px; text-align: center; line-height: 1.4; }
+    .modal-status.ok { color: #1a9c4a; }
+    .modal-status.err { color: #ff3b30; }
     .modal-actions {
       display: flex;
       justify-content: space-between;
@@ -269,6 +272,7 @@
       <h2>무엇을 추가할까요?</h2>
       <button class="choice-btn" onclick="closeModal('chooseModal'); openModal('addModal')">🔗 링크 추가</button>
       <button class="choice-btn" onclick="closeModal('chooseModal'); openModal('folderModal')">📁 폴더 만들기</button>
+      <button class="choice-btn" onclick="closeModal('chooseModal'); openBackup()">💾 백업 / 복원</button>
       <div class="modal-actions">
         <button class="btn-cancel" onclick="closeModal('chooseModal')">취소</button>
       </div>
@@ -326,6 +330,29 @@
       <div class="modal-actions">
         <button class="btn-cancel" onclick="closeModal('folderLinkModal')">취소</button>
         <button class="btn-save" onclick="saveFolderLinks()">저장</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 백업 / 복원 팝업 -->
+  <div class="modal-overlay" id="backupModal">
+    <div class="modal-content">
+      <h2>백업 / 복원</h2>
+      <textarea id="backupText" placeholder="여기에 백업 코드가 나타나요. 가져올 때는 백업 코드를 붙여넣으세요."></textarea>
+      <div class="modal-hint">
+        <b>옮기는 방법</b><br>
+        1. 기존 기기에서 “내보내기”를 눌러 코드를 복사<br>
+        2. 카톡 “나에게 보내기” 등으로 다른 기기에 전달<br>
+        3. 다른 기기에서 코드를 붙여넣고 “가져오기”<br>
+        가져오기는 기존 데이터를 지우지 않고, 없는 링크와 폴더만 합쳐요.
+      </div>
+      <div class="modal-status" id="backupStatus"></div>
+      <div class="modal-actions">
+        <button class="btn-save" onclick="exportBackup()">내보내기</button>
+        <button class="btn-save" onclick="importBackup()">가져오기</button>
+      </div>
+      <div class="modal-actions">
+        <button class="btn-cancel" onclick="closeModal('backupModal')">닫기</button>
       </div>
     </div>
   </div>
@@ -613,6 +640,7 @@
       }
       if (id === 'pwModal') { $('pwInput').value = ''; $('pwError').textContent = ''; pendingFolderId = null; }
       if (id === 'folderLinkModal') { $('flName').value = ''; $('flUrls').value = ''; }
+      if (id === 'backupModal') { $('backupText').value = ''; $('backupStatus').textContent = ''; }
     }
 
     // ---------- 홈: 링크 저장 ----------
@@ -648,6 +676,105 @@
       saveFolders(folders);
       renderHome();
       closeModal('folderModal');
+    }
+
+    // ---------- 백업 / 복원 ----------
+    const BACKUP_PREFIX = 'CHOO1:';
+
+    function setBackupStatus(msg, ok) {
+      const el = $('backupStatus');
+      el.textContent = msg;
+      el.className = 'modal-status ' + (ok ? 'ok' : 'err');
+    }
+    function openBackup() {
+      $('backupText').value = '';
+      $('backupStatus').textContent = '';
+      openModal('backupModal');
+    }
+
+    function encodeBackup(obj) {
+      return BACKUP_PREFIX + btoa(unescape(encodeURIComponent(JSON.stringify(obj))));
+    }
+    function decodeBackup(text) {
+      const clean = text.replace(/\s+/g, '');
+      if (!clean.startsWith(BACKUP_PREFIX)) throw new Error('형식이 맞지 않음');
+      return JSON.parse(decodeURIComponent(escape(atob(clean.slice(BACKUP_PREFIX.length)))));
+    }
+
+    async function exportBackup() {
+      const code = encodeBackup({ v: 1, links: getLinks(), folders: getFolders() });
+      const ta = $('backupText');
+      ta.value = code;
+      let copied = false;
+      try {
+        if (navigator.clipboard && window.isSecureContext) {
+          await navigator.clipboard.writeText(code);
+          copied = true;
+        }
+      } catch (e) {}
+      if (!copied) {
+        try {
+          ta.focus();
+          ta.select();
+          ta.setSelectionRange(0, code.length);
+          copied = document.execCommand('copy');
+        } catch (e) {}
+      }
+      setBackupStatus(
+        copied ? '백업 코드를 복사했어요. 카톡 “나에게 보내기” 등에 붙여넣어 전달하세요.'
+               : '자동 복사가 안 됐어요. 위 코드를 길게 눌러 직접 복사해주세요.',
+        copied);
+    }
+
+    function importBackup() {
+      const text = $('backupText').value.trim();
+      if (!text) { setBackupStatus('백업 코드를 붙여넣어주세요.', false); return; }
+
+      let data;
+      try {
+        data = decodeBackup(text);
+        if (!data || !Array.isArray(data.links) || !Array.isArray(data.folders)) throw new Error('구조 오류');
+      } catch (e) {
+        setBackupStatus('백업 코드가 올바르지 않아요. 전체를 빠짐없이 복사했는지 확인해주세요.', false);
+        return;
+      }
+
+      // 홈 링크: 같은 주소가 없는 것만 추가
+      const links = getLinks();
+      let addedLinks = 0;
+      data.links.forEach(l => {
+        if (l && l.url && !links.some(x => x.url === l.url)) {
+          links.push({ name: String(l.name || hostOf(l.url)), url: l.url });
+          addedLinks++;
+        }
+      });
+      localStorage.setItem('chooLinks', JSON.stringify(links));
+
+      // 폴더: id가 같으면 안의 링크만 합치고, 없으면 폴더째 추가
+      const folders = getFolders();
+      let addedFolders = 0, addedFolderLinks = 0;
+      data.folders.forEach(f => {
+        if (!f || !f.id || !Array.isArray(f.links)) return;
+        const mine = folders.find(x => x.id === f.id);
+        if (!mine) {
+          folders.push({ id: f.id, name: String(f.name || '폴더'), salt: f.salt || '', hash: f.hash || null,
+            links: f.links.filter(l => l && l.url).map(l => ({ id: l.id || randomId(), name: l.name || '', url: l.url })) });
+          addedFolders++;
+          addedFolderLinks += f.links.length;
+        } else {
+          f.links.forEach(l => {
+            if (l && l.url && !mine.links.some(x => x.url === l.url)) {
+              mine.links.push({ id: l.id || randomId(), name: l.name || '', url: l.url });
+              addedFolderLinks++;
+            }
+          });
+        }
+      });
+      saveFolders(folders);
+      renderHome();
+
+      setBackupStatus('가져왔어요. 링크 ' + addedLinks + '개, 폴더 ' + addedFolders + '개, 폴더 안 링크 ' + addedFolderLinks + '개가 추가됐어요.', true);
+      $('backupText').value = '';
     }
 
     // 엔터키로 비밀번호 확인
